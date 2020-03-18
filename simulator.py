@@ -6,6 +6,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 
 import random
+import csv
 
 random.seed("trueskill rulez")
 
@@ -15,7 +16,10 @@ trueskill.setup(mu=1500, sigma=500, beta=240, tau=10, draw_probability=0.10)
 
 class Player:
     static_id = 0
-    def __init__(self, skill_mu=1500, skill_sigma=500, rating_mu=1500, rating_sigma=500):
+
+    def __init__(
+        self, skill_mu=1500, skill_sigma=500, rating_mu=1500, rating_sigma=500
+    ):
         self._id = Player.static_id
         Player.static_id += 1
 
@@ -32,10 +36,16 @@ class Player:
             f" after {len(self._game_journal)} games."
         )
 
+    def matches_with(self, other, threshold=0.7):
+        my_quality = trueskill.quality([(self.rating,), (self.rating,)])
+        their_quality = trueskill.quality([(other.rating,), (other.rating,)])
+        match_quality = trueskill.quality([(self.rating,), (other.rating,)])
+
+        return match_quality > threshold * max(my_quality, their_quality)
 
     def battle(self, opponent):
-        i_win = (random.uniform(0, 1) < win_probability(self, opponent))
-        
+        i_win = random.uniform(0, 1) < win_probability(self, opponent)
+
         rating_groups = [(self.rating,), (opponent.rating,)]
         ranks = [1 - int(i_win), int(i_win)]
 
@@ -48,7 +58,29 @@ class Player:
 
         self.rating = my_rating
         opponent.rating = their_rating
-    
+
+    @classmethod
+    def from_csv(cls, eval_function, filename="ratings.csv"):
+        with open(filename) as f:
+            reader = csv.reader(f)
+            return [cls(*eval_function(row)) for row in reader]
+
+
+def no_rerate(row):
+    id, g_mean, g_dev, g_num, l_mean, l_dev, l_num = row
+    return (float(l_mean), float(l_dev), float(g_mean), float(g_dev))
+
+
+def double_dev(row):
+    id, g_mean, g_dev, g_num, l_mean, l_dev, l_num = row
+    return (float(l_mean), float(l_dev), float(g_mean), 2 * float(g_dev))
+
+
+def add_150_dev(row):
+    id, g_mean, g_dev, g_num, l_mean, l_dev, l_num = row
+    return (float(l_mean), float(l_dev), float(g_mean), 150 + float(g_dev))
+
+
 def plot_histories(players):
     fig, ax = plt.subplots()
     for player in players:
@@ -56,6 +88,7 @@ def plot_histories(players):
         plt.plot(range(len(ratings)), ratings)
 
     plt.show()
+
 
 # see https://trueskill.org/#win-probability
 def win_probability(player, opponent):
@@ -66,26 +99,21 @@ def win_probability(player, opponent):
     return ts.cdf(delta_mu / denom)
 
 
-
 if __name__ == "__main__":
     GAMES_PER_PLAYER = 20
-    # Player(
-    #    actual_skill, actual_skill_sigma, 
-    #    initial_rating=1500, initial_sigma=500
-    # )
-    players = [
-        Player(1000, 200),
-        Player(1000, 200),
-        Player(1000, 200),
-        Player(2000, 200),
-        Player(2000, 200),
-        Player(2000, 200),
-    ]
+    THRESHOLD = 0.7
+    RERATE_FUNCTION = add_150_dev
+    players = Player.from_csv(RERATE_FUNCTION)
 
-    for _ in range(GAMES_PER_PLAYER * len(players)):
+    game_count = 0
+    while game_count < GAMES_PER_PLAYER * len(players):
         player, opponent = random.choices(players, k=2)
-        player.battle(opponent)
-    
+        if player.matches_with(opponent, THRESHOLD):
+            game_count += 1
+            if game_count % 100 == 0:
+                print(f"Match {game_count}")
+            player.battle(opponent)
+
     for player in players:
         player.print_history()
 
